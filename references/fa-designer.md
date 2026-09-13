@@ -90,14 +90,27 @@
 
 型材：
 
-| 型号 | sectionId | 说明 |
-|---|---|---|
-| `TXCJ-2020` | `1488216301085844` | 欧标 20 系列，槽宽 6，壁厚 1.4，0.48 kg/m |
-| `TXCK-3030` | 未记录 | 欧标 30 系列，壁厚 2，0.85 kg/m，设计器默认款 |
+| 型号 | sectionId | name / productName | classificationEnCode | shapeCenter | 说明 |
+|---|---|---|---|---|---|
+| `TXCJ-2020` | `1488216301085844` | `2020铝型材` | `20mm` | `{x:10,y:10}` | 欧标 20 系列，槽宽 6，壁厚 1.4，0.48 kg/m，¥13.24/m 未税 |
+| `TXCK-3030` | `1476655426582219` | `3030铝型材 欧标` | `30mm OB` | `{x:15,y:15}` | 欧标 30 系列，壁厚 2，0.85 kg/m，¥23.84/m 未税，设计器默认款 |
 
-型材表面：`materialId 1375666316970598` = 本色(喷砂氧化)。黑色是 `TXCJ-H7-2020`。
+**要任意型号的整组参数，直接打接口，别去界面里画** —— `POST /api/fa-platform/profile/cad/section` `{profileProductModels:["TXCK-3030"]}` 一次就全给了，而且字段名能直接对上实体 schema：
 
-**要别的型号的 sectionId**：在设计器界面里切到那个规格，随便画一根，然后读 `mgr.getAllEntities()` 里那根 Profile 的 `sectionId` / `materialId` / `model` / `classificationEnCode` / `shapeCenter`，整组抄下来。比翻接口快，而且拿到的一定是这一版能用的。
+| 接口返回 | 填进实体的字段 |
+|---|---|
+| `data[0].bizKey` | `sectionId` |
+| `data[0].productName` | `name` 和 `productName` |
+| `data[0].profileProductModel` | `model` |
+| `data[0].classificationEnCode` | `classificationEnCode` |
+| `data[0].w` / `.h` | `shapeCenter = {x: w/2, y: h/2}` |
+| `data[0].materials[].textureProfileProductBizKey` | `materialId` |
+
+`materials[]` 还带每个颜色的 `meterPrice`（未税米价）和 `meterWeight`，估价直接读这个。四色实测：本色 `1375666316970598` / 黑色 `1236793474354756` / 白色 `1227277954592747` / 原木色 `1428676321059605` —— 这四个 ID 在 2020 和 3030 上是同一套，跨规格通用。3030 原木色 ¥26.17/m，比本色贵 ¥2.33/m。
+
+（`/profile-draft/example` 在 2026-09-13 返回 500，扒官方示例稿这条路暂时断了。）
+
+**改型材规格要带 shapeCenter。** `mgr.updateEntity(p, {sectionId, model, name, productName, classificationEnCode, shapeCenter})`，`changedKeys` 六个字段全带上，再跟 `ensureAllAssets()` + `onEntityUpdated`。漏了 `shapeCenter` 截面中心会错半边。
 
 板材（specId / materialId / materialName / model / materialModel / productName）：
 

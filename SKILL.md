@@ -22,6 +22,7 @@ description: 嘉立创下单：铝型材骨架、板材、钣金折弯件的建�
 | 「更多」菜单 | 分享设计稿 / 开源设计稿 / 我的设计稿 / 官网 / 偏好设置，**没有导入** |
 | core API | `manager` / `IOHelper` / `documentGroup` / `bomHelper` 四组方法齐全 |
 | 接口数 | 15 条已知 `/api/fa-platform/*` |
+| 「一键生成连接件」对注入实体 | **不生效**（2026-09-13 实测，见下） |
 
 **对不上就按新情况重做分派，然后回来改这份文档** —— 材料 ID 表、路线图、基线表都要跟着动，别把新发现只留在这次对话里。材料库上新单独看 [fa-designer.md](references/fa-designer.md) 的材料表，那张表最容易过期。
 
@@ -40,6 +41,10 @@ description: 嘉立创下单：铝型材骨架、板材、钣金折弯件的建�
 
 浏览器工具用 chrome-devtools MCP。设计器在一个 iframe 里，所有脚本都要先穿进 `iframe.contentWindow`。
 
+**两个必然会撞上的交互坑：**
+- **点按钮必须用 chrome-devtools 的 `click` 工具（真实 CDP 鼠标事件）。** 脚本里 `el.click()` 和手搓 `dispatchEvent(new MouseEvent(...))` 都不触发它的 React handler —— 无声失败，没有任何报错。用 `take_snapshot` 拿 uid，再 `click`。
+- **「保存成功」弹窗挂在最外层 document，不在 iframe 里。** 它是 modal，不关掉会挡住之后所有点击，而且在 iframe 里怎么找都找不到。保存后先 `take_snapshot` 找到外层的 `button "Close"` 点掉，再做下一步。
+
 1. **打开设计稿**：`https://xc.jlcfa.com/free-design?draftVersionId=<id>`，或 `/my-design` 列表点进去。等 canvas 出现再动手（10s 以上）。
 2. **拿 core**：从 canvas 往上找 `__reactFiber$`，在 fiber 链上找带 `document.manager` + `IOHelper` 的 props 对象，挂到 `contentWindow.__CORE__`。完整代码在 [scripts/fa-inject.js](scripts/fa-inject.js)。
 3. **写实体**：Profile（型材）只需 sp/ep 轴线端点，Panel（板材）需要 position + uAxis/vAxis + 由三轴算出的 worldQuaternion。字段模板和坐标约定在 [fa-designer.md](references/fa-designer.md)。
@@ -51,7 +56,9 @@ description: 嘉立创下单：铝型材骨架、板材、钣金折弯件的建�
 
 ### 三件会静默出错的事
 
-- **连接件只在这个 UI 动作里生成。** 实体上的 `spAutoGenConnector: true` 只在界面里画型材时生效，注入后加载不补。跳过第 7 步，报价里加工费和配件费就是 ¥0，而且看起来很正常。
+- **注入的实体拿不到连接件（2026-09-13 实测）。** 实体上的 `spAutoGenConnector: true` 只在界面里画型材时生效；点「一键生成连接件」对注入进来的型材**完全没有反应** —— 实体数不变、不报错、没有弹窗。试过等 60s、重复点、把跨系列（3030 柱 + 2020 梁）统一成全 3030 再点，都不生成，所以**不是跨系列节点不支持**，是整条自动连接件链路认不出注入的实体。`core` 上也没有可直接调用的生成方法（`manager.connectorSyncHelper` 只有 syncTranslate/syncRotate/syncProperty）。
+  后果：报价里**加工费和配件费就是 ¥0**，而且看起来很正常。这不是"跳过了第 7 步"，是第 7 步现在做不到。
+  **现在的做法**：注入模型只用来定几何、出型材下料表和板材价；连接件和加工费按比例外推（一个连接件 ≈ 2 个特征 × ¥1.6 未税），在报方案时单列成"未计入"项。真要拿到准数，只能在界面里手工画一遍，或者等 STEP 导入上线。
 - **计价面板是快照。** 生成连接件之前打开过的计价弹窗不会自己刷新。改完模型关掉弹窗重新点一次「计价/下单」。
 - **改材质要带 assets。** `mgr.updateEntity(p, 新材料字段)` 之后走 `assetsManager.ensureMaterialAssets([materialId])` + `ensureAllAssets()` + `onEntityUpdated({ids, changedKeys})`，否则渲染用旧贴图，价格却按新材料算。
 
