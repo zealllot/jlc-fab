@@ -84,6 +84,13 @@ description: 嘉立创下单：铝型材骨架、板材、钣金折弯件的建�
 - **自动保存会把稿名改掉。** core 里有个 `autoSaveController`，隔一阵自动存一版，并把设计稿名替换成 `XCSJQ_<客户号>_<序号>_V<版本>` 这种机器名（实测从「前室储藏架-v15-定稿」变成「XCSJQ_13627939A_8_V69」，版本也从 V65 悄悄推到 V69）。
   **每次动手前先读一眼 `core.document.name`**，被改了就 `core.document.setDocName('原名')` 改回来再保存，否则「我的设计稿」列表里很快全是认不出来的机器名。
 - **确认弹窗多了一句官方免责声明。** 「确定重新生成连接件吗？」里新增：*"此设计器处于上线初期，一键生成连接件功能仅覆盖常规连接场景，建议您认真核对连接件生成的合理性。"* —— 平台自己承认覆盖不全，所以生成完**必须**扫一遍节点覆盖率，别假设它全做了。
+- **注入 ProcessHole（额外孔位）必须克隆现成实体，不能拼纯对象（2026-09-18 实测）。** `打孔加工` 模块还标着开发中，但孔可以注入，而且**会正常计价**。
+  纯对象 `mgr.addEntity({type:'ProcessHole', ...})` 能加进 document，但平台会在实体上调方法：先是渲染时 `e.isSemiTransparent is not a function`，随后整个 iframe 界面崩掉（canvas 和按钮全消失，core 还活着）。**正确做法**：`const h = 某个同类孔.clone(); h.ownerId=…; h.localPosition=…; mgr.addEntity(h)`。判断有没有原型：`typeof e.clone === 'function'`。
+  **`documentGroup.onEntityAdded({ids})` 的 `ids` 实际要的是实体对象**，不是 id 字符串（源码是 `e.ids.forEach(e=>this.addObject(e))`）。传字符串会报 `e.clone is not a function`。`onEntityUpdated` 则接受 id 字符串，而且它内部会 `updateOwnedHoles(ids)` —— **刷新宿主型材就能把挂在它上面的孔一起渲染出来**，比直接 add 更稳。
+  孔实体关键字段：`ownerId`（宿主型材）、`faceName`、`localPosition`（相对型材轴线，z 沿轴线从 sp 起算）、`localDirection`、`model`（料号，如 `TK8.5`）、`specList`、`holeType`（`ThroughHole`/`ThreadedHole`/`CountersunkHole`）。自己加的孔把 `sourceAccessoryId` 置空即可，不会被回收。
+- **面名与方向的对应（3030 实测）：** `side0`→dir(1,0,0) 从 local −x 进；`side1`→(0,−1,0) 从 +y 进；`side2`→(−1,0,0) 从 +x 进；`side3`→(0,1,0) 从 −y 进；`bottom`/`top` 是 sp/ep 两个端面。沉头孔起点取轴线 ±15.2，通孔取 ±17.7。
+  **局部坐标怎么对到世界**：local z 永远沿型材轴线（从 sp 起算），`local x ↔ world x`；剩下那一轴按右手系推。标定方法是挑一个**已知节点**的现成孔，用它的 localPosition 反推——别硬猜。
+- **界面崩了也还能存盘：`await core.autoSaveController.saveWithRetry()`。** 存完 `autoSaveController.isDirty` 变 false 就是成功。iframe 的 React 树炸掉、按钮全没的时候，这是唯一的活路（core 仍挂在 contentWindow 上）。
 - **改完刷新必须带 ignoreCache。** 设计稿是 OSS 上的一个 zip，普通刷新会命中浏览器缓存读到旧 zip —— 表现成「保存明明成功了，刷新回来改动没了」，极具迷惑性。chrome-devtools 用 `navigate_page({type:'reload', ignoreCache:true})`。
   顺带：别用 `document.body.innerText` 里有没有「保存成功」判断保存成功，隐藏的旧弹窗会干扰。靠谱做法是等外层 `.el-dialog.save-free-draft-success` 可见，顺手把它 input 里的版本号读出来，既确认了保存也拿到了版本。
 - **连接件的真实单价很便宜，别按经验高估。** 实测 18 个连接件 / 36 个孔：加工费 ¥57.66 未税 = **¥1.60/孔**（和 specs 里的 ¥1.6/特征 对上），配件费 ¥3.42 未税 = **¥0.19/颗螺钉**。**一个节点（2 孔 + 1 螺钉）约 ¥3.39 未税 / ¥3.83 含税**，102 个节点全走平台也才 ¥390。连接件不是成本大头，板材才是。
