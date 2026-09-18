@@ -88,6 +88,14 @@ description: 嘉立创下单：铝型材骨架、板材、钣金折弯件的建�
   纯对象 `mgr.addEntity({type:'ProcessHole', ...})` 能加进 document，但平台会在实体上调方法：先是渲染时 `e.isSemiTransparent is not a function`，随后整个 iframe 界面崩掉（canvas 和按钮全消失，core 还活着）。**正确做法**：`const h = 某个同类孔.clone(); h.ownerId=…; h.localPosition=…; mgr.addEntity(h)`。判断有没有原型：`typeof e.clone === 'function'`。
   **`documentGroup.onEntityAdded({ids})` 的 `ids` 实际要的是实体对象**，不是 id 字符串（源码是 `e.ids.forEach(e=>this.addObject(e))`）。传字符串会报 `e.clone is not a function`。`onEntityUpdated` 则接受 id 字符串，而且它内部会 `updateOwnedHoles(ids)` —— **刷新宿主型材就能把挂在它上面的孔一起渲染出来**，比直接 add 更稳。
   孔实体关键字段：`ownerId`（宿主型材）、`faceName`、`localPosition`（相对型材轴线，z 沿轴线从 sp 起算）、`localDirection`、`model`（料号，如 `TK8.5`）、`specList`、`holeType`（`ThroughHole`/`ThreadedHole`/`CountersunkHole`）。自己加的孔把 `sourceAccessoryId` 置空即可，不会被回收。
+- **端面攻牙同样可以注入，一键生成只管连接件那几处（2026-09-18 实测）。** 一键生成只在**连接件落点**产攻牙，柱脚装脚垫要的 M8 孔它不会给 —— 但那是同一道工序，克隆一个现成的端面孔改 `ownerId` 就行，4 个孔 ¥6.41，比让用户买丝锥自己攻划算。
+  `LK8`（productName「LK8（8毫米螺孔）」）就是 M8 端面攻牙：`faceName` 取 `bottom`/`top`，`localPosition {x:0,y:0,z:-0.1}`（sp 端）或 `{0,0,L+0.1}`（ep 端），`localDirection {0,0,1}`，`holeType:'ThreadedHole'`，`specList` 里 diameter 8 / depth 20。
+  **教训**：别拿 UI 上「打孔加工 开发中」的标签去判断能力边界 —— 面板和孔都是这样，标着开发中，注入进去照样计价。要判断某道工序做不做，查 specs-and-prices 的加工清单，或者直接注入一个试计价。
+- **移动型材不会带动它的连接件和对侧的孔（2026-09-18 实测）。** `mgr.updateEntity(profile, {sp,ep,logicSp,logicEp})` 只动型材自己。挂在它身上的孔（localPosition 相对轴线）会跟着走，但另外两样不会：
+  1. `SlotHoleConnector.position` —— 螺钉会留在原地
+  2. **对侧构件上的配对孔** —— 比如横杆挪了高度，立柱上那个 `30 CT8` 沉头孔的 `localPosition.z` 还是旧值
+  找法：连接件用 `relatedEntity[].id` 反查，配对孔用 `sourceAccessoryId === 连接件.id && ownerId !== 本型材.id`。全部改完再一次 `onEntityUpdated({ids, changedKeys})`。
+  **不要为此重跑一键生成** —— 它会把自己注入的额外孔一起清掉。手动同步这几个实体反而更安全。
 - **面名与方向的对应（3030 实测）：** `side0`→dir(1,0,0) 从 local −x 进；`side1`→(0,−1,0) 从 +y 进；`side2`→(−1,0,0) 从 +x 进；`side3`→(0,1,0) 从 −y 进；`bottom`/`top` 是 sp/ep 两个端面。沉头孔起点取轴线 ±15.2，通孔取 ±17.7。
   **局部坐标怎么对到世界**：local z 永远沿型材轴线（从 sp 起算），`local x ↔ world x`；剩下那一轴按右手系推。标定方法是挑一个**已知节点**的现成孔，用它的 localPosition 反推——别硬猜。
 - **界面崩了也还能存盘：`await core.autoSaveController.saveWithRetry()`。** 存完 `autoSaveController.isDirty` 变 false 就是成功。iframe 的 React 树炸掉、按钮全没的时候，这是唯一的活路（core 仍挂在 contentWindow 上）。
