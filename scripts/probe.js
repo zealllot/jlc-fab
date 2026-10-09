@@ -11,8 +11,18 @@ async () => {
   const d = f.contentDocument, w = f.contentWindow;
   const out = { 探测时间: new Date().toISOString().slice(0, 10) };
 
+  // 裸 el.click() 对一部分按钮无声失败（React handler 挂在 pointer 事件上）。
+  // 事件构造函数必须取自 iframe 的 window，否则被当成跨 realm 对象。
+  const fire = el => { const rc = el.getBoundingClientRect();
+    const o = { bubbles: true, cancelable: true, view: w,
+                clientX: rc.left + rc.width / 2, clientY: rc.top + rc.height / 2 };
+    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(t =>
+      el.dispatchEvent(new (t.startsWith('pointer') ? w.PointerEvent : w.MouseEvent)(t, o))); };
+
   // ---- 1. 左侧模块：哪些还标着"开发中" ----
-  // 基线（2026-09-01）：只有「铝型材」可用；连接件/打孔加工/面板/门/抽屉/其他配件 全是开发中。
+  // 基线：2026-09-01 只有「铝型材」可用，其余标「开发中」；2026-09-19 再看标记已不在。
+  // 但标签说明不了能力边界 —— 面板/孔标着开发中时注入照样计价，板材挂孔界面正常却不计价。
+  // 真要确认某道工序，注入一个再看加工费动没动，别看这里的标签。
   // 顶部工具栏的「编辑连接件 → 一键生成连接件」不受此限，一直可用。
   const MODULES = ['铝型材', '连接件', '打孔加工', '面板', '门', '抽屉', '其他配件'];
   out.模块 = {};
@@ -20,7 +30,7 @@ async () => {
     const tab = [...d.querySelectorAll('*')].find(e => e.children.length === 0 &&
       e.textContent.trim() === m && e.offsetParent);
     if (!tab) { out.模块[m] = '没找到入口'; continue; }
-    tab.click(); await sleep(1200);
+    fire(tab); await sleep(1200);
     out.模块[m] = /开发中/.test(d.body.innerText) ? '开发中' : '可用';
   }
 
@@ -28,7 +38,7 @@ async () => {
   // 基线：「更多」里只有 分享设计稿/开源设计稿/我的设计稿/官网/偏好设置，没有导入。
   const more = [...d.querySelectorAll('*')].find(e => e.children.length === 0 &&
     e.textContent.trim() === '更多' && e.offsetParent);
-  if (more) { more.click(); await sleep(1000); }
+  if (more) { fire(more); await sleep(1000); }
   out.更多菜单 = [...d.querySelectorAll('li,div,span')]
     .filter(e => e.offsetParent && e.children.length === 0)
     .map(e => e.textContent.trim())
@@ -45,7 +55,7 @@ async () => {
       'document.manager': ['getAllEntities', 'addEntity', 'delEntityById', 'updateEntity'],
       'IOHelper': ['getDocument', 'ensureAllAssets'],
       'documentGroup': ['onEntityAdded', 'onEntityDeleted', 'onEntityUpdated', 'getEntityObjectById'],
-      'bomHelper': ['computeSpecification', 'generateBomInfo'],
+      'bomHelper': ['generateBomInfo'],   // computeSpecification 已于 2026-09-18 被移除
     };
     const got = {
       'document.manager': meths(core.document.manager),
@@ -59,6 +69,8 @@ async () => {
       if (miss.length) out.core缺失[k] = miss;
     }
     out.core正常 = Object.keys(out.core缺失).length === 0;
+    // 移除过的 API 又回来了，同样是平台动过的信号
+    if (got.bomHelper.includes('computeSpecification')) out.回归的API = ['bomHelper.computeSpecification'];
     // 新增的方法往往就是新功能的入口
     out.core方法数 = Object.fromEntries(Object.entries(got).map(([k, v]) => [k, v.length]));
   } else {

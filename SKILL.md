@@ -15,14 +15,16 @@ description: 嘉立创下单：铝型材骨架、板材、钣金折弯件的建�
 
 所以每次开工先跑 [scripts/probe.js](scripts/probe.js)（一两分钟），拿它的输出对下面这份基线：
 
-| 项 | 2026-09 基线 |
+| 项 | 基线（最后实测 **2026-09-19**） |
 |---|---|
-| 左侧模块 | 只有「铝型材」可用，连接件/打孔加工/面板/门/抽屉/其他配件 都标着开发中 |
+| 左侧模块 | 2026-09-01 时只有「铝型材」可用、其余标「开发中」；**2026-09-19 再看，开发中标记已经不在了**。但标签说明不了能力边界 —— 见下一行。 |
+| 标签 vs 真实能力 | **以计价为准，别信 UI 标签。**「面板」「打孔加工」标着开发中的时候，注入 Panel 和 ProcessHole 都正常计价；反过来，板材上挂孔界面一切正常、能存能查，计价却**完全忽略**。判断一道工序做不做，唯一可靠的办法是注入一个再看加工费动没动。 |
 | 顶部「编辑连接件」 | 一直可用，不受左侧模块限制 |
 | 「更多」菜单 | 分享设计稿 / 开源设计稿 / 我的设计稿 / 官网 / 偏好设置，**没有导入** |
-| core API | `manager` / `IOHelper` / `documentGroup` 齐全；**`bomHelper.computeSpecification` 已被移除（2026-09-18）**，整体尺寸自己扫包围盒算 |
+| core API | `manager` / `IOHelper` / `documentGroup` 齐全；**`bomHelper.computeSpecification` 已被移除（2026-09-18）**，整体尺寸自己扫包围盒求并集 |
 | 接口数 | 15 条已知 `/api/fa-platform/*` |
-| 「一键生成连接件」对注入实体 | 可用，但**必须先存盘 + 刷新**；且只覆盖一部分节点（18 根型材 / 26 节点 → 7 个节点 12 颗螺钉），其余在界面里手工补 |
+| 「一键生成连接件」 | 对注入实体可用，但**必须先存盘 + 刷新**。覆盖率由几何决定，不是平台能力上限：轴线共线 + 截面同宽时实测可达 **100%**（26/26、24/24 各一次）；混用规格会掉到 7/26。阶梯见下文。 |
+| 板材加工 | **不支持**（2026-09-19 实测）。板材只按外形尺寸下料，孔自己钻。 |
 
 **对不上就按新情况重做分派，然后回来改这份文档** —— 材料 ID 表、路线图、基线表都要跟着动，别把新发现只留在这次对话里。材料库上新单独看 [fa-designer.md](references/fa-designer.md) 的材料表，那张表最容易过期。
 
@@ -42,14 +44,25 @@ description: 嘉立创下单：铝型材骨架、板材、钣金折弯件的建�
 浏览器工具用 chrome-devtools MCP。设计器在一个 iframe 里，所有脚本都要先穿进 `iframe.contentWindow`。
 
 **两个必然会撞上的交互坑：**
-- **点按钮必须用 chrome-devtools 的 `click` 工具（真实 CDP 鼠标事件）。** 脚本里 `el.click()` 和手搓 `dispatchEvent(new MouseEvent(...))` 都不触发它的 React handler —— 无声失败，没有任何报错。用 `take_snapshot` 拿 uid，再 `click`。
+- **点按钮：裸 `el.click()` 不可靠，要补完整的指针事件序列（2026-09-18 修正）。**
+  裸 `el.click()` 对有些按钮有效（如「保存设计稿」），对另一些**无声失败**（如「计价/下单」，点了什么都不发生）。原因是 React 的 handler 挂在 pointer 事件上。
+  **可靠写法**（本项目里用了二十多次，零失败）：
+  ```js
+  const fire = el => { const rc = el.getBoundingClientRect();
+    const o = {bubbles:true, cancelable:true, view:w,
+               clientX:rc.left+rc.width/2, clientY:rc.top+rc.height/2};
+    ['pointerdown','mousedown','pointerup','mouseup','click'].forEach(t =>
+      el.dispatchEvent(new (t.startsWith('pointer') ? w.PointerEvent : w.MouseEvent)(t, o))); };
+  ```
+  `w` 是 iframe 的 contentWindow —— **事件构造函数必须取自目标 window**，用外层的 `MouseEvent` 会被当成跨 realm 对象。
+  chrome-devtools 的 `click` 工具（真实 CDP 事件）当然也行，而且最保险；但它要先 `take_snapshot` 拿 uid，批量操作时上面那个 `fire()` 更顺手。
 - **「保存成功」弹窗挂在最外层 document，不在 iframe 里。** 它是 modal，不关掉会挡住之后所有点击，而且在 iframe 里怎么找都找不到。保存后先 `take_snapshot` 找到外层的 `button "Close"` 点掉，再做下一步。
 
 1. **打开设计稿**：`https://xc.jlcfa.com/free-design?draftVersionId=<id>`，或 `/my-design` 列表点进去。等 canvas 出现再动手（10s 以上）。
 2. **拿 core**：从 canvas 往上找 `__reactFiber$`，在 fiber 链上找带 `document.manager` + `IOHelper` 的 props 对象，挂到 `contentWindow.__CORE__`。完整代码在 [scripts/fa-inject.js](scripts/fa-inject.js)。
 3. **写实体**：Profile（型材）只需 sp/ep 轴线端点，Panel（板材）需要 position + uAxis/vAxis + 由三轴算出的 worldQuaternion。字段模板和坐标约定在 [fa-designer.md](references/fa-designer.md)。
 4. **让可视层跟上**：`loadDoc(doc)` → `await IOHelper.ensureAllAssets()` → `documentGroup.onEntityAdded({ids})`。少任何一步，实体存在但画面空白，包围盒也算不出来。
-5. **校验几何**：对每个实体取 `computeAccurateWorldBoundingBox()`，逐件核对 min/max。整体尺寸用 `core.bomHelper.computeSpecification()`。**完成标准是每一件的包围盒都和图纸对得上**，不是画面看着对。
+5. **校验几何**：对每个实体取 `computeAccurateWorldBoundingBox()`，逐件核对 min/max，**整体尺寸把这些包围盒求并集**（`computeSpecification()` 已被平台移除，别再调）。**完成标准是每一件的包围盒都和图纸对得上**，不是画面看着对。
 6. **命名并保存**：`core.document.setDocName(名)`，然后点页面上的「保存设计稿」按钮，等到出现「保存成功」。保存走它自己的流程，入参由它组装。
 7. **生成连接件**：「编辑连接件」→「一键生成连接件」→「确定」→「退出连接件编辑」→ 再保存一次。
 8. **计价**：点「计价/下单」，读「设计稿尺寸 / 铝型材数量 / 连接件数量 / 各项费用」。
