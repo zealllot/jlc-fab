@@ -23,7 +23,7 @@ description: 嘉立创下单：铝型材骨架、板材、钣金折弯件的建�
 | 「更多」菜单 | 分享设计稿 / 开源设计稿 / 我的设计稿 / 官网 / 偏好设置，**没有导入** |
 | core API | `manager` / `IOHelper` / `documentGroup` 齐全；**`bomHelper.computeSpecification` 仍然没有**（2026-09-18 移除，10-10 复查未回归），整体尺寸自己扫包围盒求并集。`designerVersion` 一直报 `1.0.0`，**别拿它判断版本**。 |
 | core 新增对象（2026-10-10） | `draftSaveValidator` —— 保存前校验型材和配件的模型资源，缺模型 / 缺文件 / 缺尺寸会抛 `ACCESSORY_MODEL_LOAD_FAILED` / `..._FILE_MISSING` / `ACCESSORY_SIZE_MISSING` 并**阻止保存**（只管 Profile 和配件，不碰 ProcessHole）。另有 `screenshotHelper` / `panelOutlineScene` / `editSceneManager` / `maintenanceLocked`。 |
-| 接口清单 | **旧的扫法已失效**：bundle 里不再有字面量 `/api/fa-platform/` 路径（2026-10-10 实测，6 个脚本全抓完 0 命中）。改用 chrome-devtools 的 `list_network_requests` 抓实际请求。 |
+| 接口清单 | **旧的 bundle 扫法已失效**（2026-10-10，6 个脚本 0 命中）。用 `list_network_requests` 抓实际请求。这次新发现 9 条：`profile-draft/free`、`profile-home/stop-service-status`、`profile-home/page-info`、`alumc/queryProfileGroupQRCode`、`profile/free-designer/checkAppPermission`、**`profile/free-designer/connector/modular-list-v2`**（连接件目录）、`faMall/secret/update`、`faMall/login/user`、`faMall/shoppingCart/count`。 |
 | 「一键生成连接件」 | 对注入实体可用，但**必须先存盘 + 刷新**。覆盖率由几何决定，不是平台能力上限：轴线共线 + 截面同宽时实测可达 **100%**（26/26、24/24 各一次）；混用规格会掉到 7/26。阶梯见下文。 |
 | 板材加工 | **不支持**（2026-09-19 实测）。板材只按外形尺寸下料，孔自己钻。 |
 
@@ -173,7 +173,53 @@ description: 嘉立创下单：铝型材骨架、板材、钣金折弯件的建�
 
 **三维连接属于「端面连接」** —— 它接的是型材端面相交的角，不是"梁从侧面顶到柱子中段"。所以拿它去补中段节点是找错了工具；真要补那种节点，方向应该是**外置连接板（T型 / X型）**，外贴一块板跨过去。不过前提是真有补的必要 —— 见上面那条，规格统一后就没有漏的节点了。
 
-**手工放置连接件还没走通**：左栏提示「通过指示区域添加配件」，要点高亮的指示区；合成 pointer 事件没能把指示区激活出来（点下去实体数不变）。原生落孔能成功而放连接件不行，差别可能在于连接件要先 hover 出区域。**待解。**
+### 一键生成的连接件类型有 7 种可选，不是 2 种（2026-10-10）
+
+以前只知道「角码」和「打孔连接」两种。实际打开 `偏好设置 → 连接件 → 90°默认生成连接件类型`，下拉里是 **7 个**：
+
+| 标签 | 枚举值 |
+|---|---|
+| 角码连接(含附件) | （未读到） |
+| 内置连接(含附件) | （未读到） |
+| 锚式连接 | （未读到） |
+| 角槽连接(含附件) | `ChamferedGroove` |
+| **打孔连接(含螺钉)** | **`Screw`** ← 当前默认 |
+| 端面连接件(含附件) | `EndFaceConnector` |
+| 型材连接板(含附件) | （未读到） |
+
+**这是用上其它连接件最实际的路子** —— 改默认类型再点一键生成，比手工一个个放省事得多，而且覆盖全。左栏那 12 张卡片是**手工放置**用的，和这 7 个不是同一套粒度（卡片把端面连接细分成双通/三通/三维，把连接板细分成 T/L/X）。
+
+### 偏好 JSON 能直接读，字段很有用
+
+`GET /api/fa-platform/customer/preference` **裸 fetch 就能读**（GET 类不需要凭证）。实测返回：
+
+```
+defaultConnectorType90: "Screw"      90° 默认连接件
+defaultAngleBracketType: 1           角码型号
+autoGenerateConnector: true
+showConnectorHoles: true
+autoSaveInterval: 15                 ← 自动保存间隔，版本号疯涨的根源
+holeStepSize: 2 / stepSize: 5 / translationSnap: 5 / planeSnapDistance: 30
+panelAccessory: { Flush:{schemeId:'system-bearing'}, Overlay:{schemeId:'system-bearing'},
+                  Embedded:{}, autoGenerate:false, customSchemes:[] }
+```
+
+**`panelAccessory.autoGenerate: false`** —— 面板配件（嵌平/覆盖/嵌入三种安装方式的五金）**能自动生成但默认关着**，没试过打开。
+
+**POST 类接口裸 fetch 一律 403**（`modular-list-v2` / `cad/connector` / `connector/type-list` 都试过）—— 它们要启动时 `POST /api/faMall/secret/update` 换来的凭证。想看 POST 接口的内容，走 `list_network_requests` 读浏览器已经发过的那一条。
+
+### 手工放置连接件：仍未走通，但排除了三个原因
+
+合成 pointer 事件能成功落**孔**，却放不上**连接件**。四个目标点（已占用的顶角、空闲柱顶端面、柱底端面、另一根柱顶）全试过，实体数纹丝不动，**也没有任何报错提示**。
+
+已排除：
+- ~~弹窗遮挡~~ —— 选中端面连接件会弹「端面连接件说明」modal（里面第 1 条恰好就是"无法添加连接件？"），**偏好设置面板的 `ant-modal-wrap` 也会盖住画布**。两个都关掉、`elementFromPoint` 确认返回 CANVAS 之后，仍然放不上。
+- ~~卡片没选中~~ —— 选中态正常。
+- ~~目标被占用~~ —— 空闲的柱端面也不行。
+
+**诊断遮挡用 `d.elementFromPoint(x,y)`，别数浮层个数** —— `ant-modal-wrap` 是全屏透明层，看起来什么都没挡，实际吃掉所有点击。
+
+剩下的可能是：指示区域由一个 raf 循环按内部指针状态渲染，合成事件填不进那个状态（比如它听的是 `pointerrawupdate`，或者要求 canvas 先获得焦点）。**要走通大概得用 chrome-devtools 的真实 CDP 事件按坐标点，而不是合成事件。**
 
 ## 建 STEP 给钣金站
 
