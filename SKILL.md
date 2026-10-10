@@ -17,11 +17,15 @@ description: 嘉立创下单：铝型材骨架、板材、钣金折弯件的建�
 
 | 项 | 基线（最后实测 **2026-10-10**） |
 |---|---|
-| 左侧模块 | **铝型材 / 连接件 / 打孔加工 / 面板 四个可用**；门 / 抽屉 / 其他配件 仍标「开发中」。（2026-09-01 时只有铝型材可用，三周内上线了三个。）**「打孔加工」已实测可用（见下），新项目优先走原生模块，注入退为后备。** |
+| 左侧模块 | **铝型材 / 连接件 / 打孔加工 / 面板 四个可用**；门 / 抽屉 / 其他配件 仍「开发中」。（2026-09-01 时只有铝型材可用。）**「打孔加工」已实测可用，新项目优先走原生模块，注入退为后备。** |
+| 绘制工具 | 自由绘制(E) / 斜角铝型材(A) / 单根(L) / 矩形框架(F) 可用；**箱体(B) 仍「功能仍在开发中」**。都是切绘制模式，要在画布上取点，**合成事件驱动不了**（见下）。 |
+| 面板模块 | 全功能：面板绘制 / 添加配件 / **一键生成面板配件** / 修改默认面板配件。安装方式 4 种：嵌平式 / 矩形覆盖式 / 嵌入式 / **轮廓覆盖式**（比偏好 JSON 里多一种）。交互提示是「单击型材侧面添加面板」。 |
+| core API | **两个算尺寸的 API 都没了** —— `computeSpecification`（09-18 移除）和 `computeAccurateWorldBoundingBox`（10-10 发现也没了）。Profile 只剩 21 个方法。整体尺寸自己从 sp/ep 算，或遍历 three.js 几何顶点。详见 [fa-designer.md](references/fa-designer.md)。 |
+| 干涉检测 | **新发现的能力**：`documentGroup` 有完整 OBB 干涉检测（`detectAllInterference` / `hasPenetration` / `getPenetrationPartners`）。异步，且**注入的实体不进检测集**。 |
+| 型材价目 | 整体涨价约 **3.1%**。设计器型材库每张卡片带**实时库存米数**。**`J3030` ¥21.45 比 `3030` ¥24.52 便宜 12.5%、库存多 2.8 倍**，壁厚 1.8 vs 2 —— DIY 家具默认该从 J 系列起步。全表见 [specs-and-prices.md](references/specs-and-prices.md)。 |
 | 标签 vs 真实能力 | **以计价为准，别信 UI 标签。**「面板」「打孔加工」标着开发中的时候，注入 Panel 和 ProcessHole 都正常计价；反过来，板材上挂孔界面一切正常、能存能查，计价却**完全忽略**。判断一道工序做不做，唯一可靠的办法是注入一个再看加工费动没动。 |
 | 顶部「编辑连接件」 | 一直可用，不受左侧模块限制 |
 | 「更多」菜单 | 分享设计稿 / 开源设计稿 / 我的设计稿 / 官网 / 偏好设置，**没有导入** |
-| core API | `manager` / `IOHelper` / `documentGroup` 齐全；**`bomHelper.computeSpecification` 仍然没有**（2026-09-18 移除，10-10 复查未回归），整体尺寸自己扫包围盒求并集。`designerVersion` 一直报 `1.0.0`，**别拿它判断版本**。 |
 | core 新增对象（2026-10-10） | `draftSaveValidator` —— 保存前校验型材和配件的模型资源，缺模型 / 缺文件 / 缺尺寸会抛 `ACCESSORY_MODEL_LOAD_FAILED` / `..._FILE_MISSING` / `ACCESSORY_SIZE_MISSING` 并**阻止保存**（只管 Profile 和配件，不碰 ProcessHole）。另有 `screenshotHelper` / `panelOutlineScene` / `editSceneManager` / `maintenanceLocked`。 |
 | 接口清单 | **旧的 bundle 扫法已失效**（2026-10-10，6 个脚本 0 命中）。用 `list_network_requests` 抓实际请求。这次新发现 9 条：`profile-draft/free`、`profile-home/stop-service-status`、`profile-home/page-info`、`alumc/queryProfileGroupQRCode`、`profile/free-designer/checkAppPermission`、**`profile/free-designer/connector/modular-list-v2`**（连接件目录）、`faMall/secret/update`、`faMall/login/user`、`faMall/shoppingCart/count`。 |
 | 「一键生成连接件」 | 对注入实体可用，但**必须先存盘 + 刷新**。覆盖率由几何决定，不是平台能力上限：轴线共线 + 截面同宽时实测可达 **100%**（26/26、24/24 各一次）；混用规格会掉到 7/26。阶梯见下文。 |
@@ -57,13 +61,24 @@ description: 嘉立创下单：铝型材骨架、板材、钣金折弯件的建�
   ```
   `w` 是 iframe 的 contentWindow —— **事件构造函数必须取自目标 window**，用外层的 `MouseEvent` 会被当成跨 realm 对象。
   chrome-devtools 的 `click` 工具（真实 CDP 事件）当然也行，而且最保险；但它要先 `take_snapshot` 拿 uid，批量操作时上面那个 `fire()` 更顺手。
+- **合成事件只能驱动「点在已有实体上」的画布交互（2026-10-10 实测）。**
+
+  | 交互 | 合成 PointerEvent |
+  |---|---|
+  | 打孔：点型材表面 | ✅ 成功 |
+  | 绘制单根：空间取两点 | ❌ 无反应 |
+  | 放置连接件：点指示区域 | ❌ 无反应 |
+
+  分界是 raycast 能不能打到实体。后两类大概要真实 CDP 事件。
+  **诊断遮挡用 `d.elementFromPoint(x,y)`，别数浮层个数** —— 偏好面板的 `.ant-modal-wrap` 是全屏透明层，看着没挡实际吃掉所有点击；选中端面连接件还会弹自己的说明 modal。两个都 `.ant-modal-close` 关掉，`elementFromPoint` 返回 `CANVAS` 才算干净。
 - **「保存成功」弹窗挂在最外层 document，不在 iframe 里。** 它是 modal，不关掉会挡住之后所有点击，而且在 iframe 里怎么找都找不到。保存后先 `take_snapshot` 找到外层的 `button "Close"` 点掉，再做下一步。
 
 1. **打开设计稿**：`https://xc.jlcfa.com/free-design?draftVersionId=<id>`，或 `/my-design` 列表点进去。等 canvas 出现再动手（10s 以上）。
 2. **拿 core**：从 canvas 往上找 `__reactFiber$`，在 fiber 链上找带 `document.manager` + `IOHelper` 的 props 对象，挂到 `contentWindow.__CORE__`。完整代码在 [scripts/fa-inject.js](scripts/fa-inject.js)。
 3. **写实体**：Profile（型材）只需 sp/ep 轴线端点，Panel（板材）需要 position + uAxis/vAxis + 由三轴算出的 worldQuaternion。字段模板和坐标约定在 [fa-designer.md](references/fa-designer.md)。
 4. **让可视层跟上**：`loadDoc(doc)` → `await IOHelper.ensureAllAssets()` → `documentGroup.onEntityAdded({ids})`。少任何一步，实体存在但画面空白，包围盒也算不出来。
-5. **校验几何**：对每个实体取 `computeAccurateWorldBoundingBox()`，逐件核对 min/max，**整体尺寸把这些包围盒求并集**（`computeSpecification()` 已被平台移除，别再调）。**完成标准是每一件的包围盒都和图纸对得上**，不是画面看着对。
+5. **校验几何**：**`computeSpecification()` 和 `computeAccurateWorldBoundingBox()` 现在都不存在了**（分别于 2026-09-18 / 10-10 确认）。改为**直接从 sp/ep 算**：型材是直杆，各杆端点的 min/max 并集再各向外扩半个截面，就是整体尺寸。**完成标准是每一件的坐标都和图纸对得上**，不是画面看着对。
+   顺手跑一次干涉检测（见 [fa-designer.md](references/fa-designer.md)）—— 但注意它不认注入的实体，要存盘刷新之后才有效。
 6. **命名并保存**：`core.document.setDocName(名)`，然后点页面上的「保存设计稿」按钮，等到出现「保存成功」。保存走它自己的流程，入参由它组装。
 7. **生成连接件**：「编辑连接件」→「一键生成连接件」→「确定」→「退出连接件编辑」→ 再保存一次。
 8. **计价**：点「计价/下单」，读「设计稿尺寸 / 铝型材数量 / 连接件数量 / 各项费用」。

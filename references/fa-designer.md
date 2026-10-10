@@ -162,3 +162,93 @@ core.document.manager.getAllEntities().filter(e => e.type === 'Panel')
 ```
 
 `paramAccessId` 是每个商品自己的，在商品详情页 `jlcfa.com/serial/<id>.html` 抓一次 XHR 就有。返回 `priceWithTax` `totalPriceWithTax` `showDeliveryTime.deliveryDesc`。
+
+---
+
+# 2026-10-10 实测：core API 面已经大变
+
+## 两个算尺寸的 API 都没了
+
+`bomHelper.computeSpecification()` 2026-09-18 被移除，当时的替代写法是「逐件 `computeAccurateWorldBoundingBox()` 求并集」。**现在那个也没了** —— Profile 一共只剩 21 个方法，一个带 bound/box/size 的都没有。
+
+**现在怎么算包围盒**，两条路：
+
+1. **自己从 sp/ep + 截面尺寸算**（推荐）。型材是直杆，轴线两端已知，截面是 N×N，整体尺寸就是各杆的 min/max 并集再各向外扩半个截面。前室储藏架整个项目全程这么算，和计价页逐项对得上。
+2. **遍历 three.js 几何顶点**。`documentGroup.getEntityObjectById(id)` 拿到 Object3D，`traverse` 取 `geometry.attributes.position`，用 `matrixWorld` 变换到世界坐标求 min/max。实测一根 2020×1173 得到 `20 × 1173 × 20`，准确。没有全局 `THREE`，所以得手搓矩阵乘法。
+
+## Profile 现有方法（21 个，去掉 Object 原型的）
+
+```
+clone  update  serialize  isSemiTransparent
+toWorld  worldToLocal  normalToWorld  worldNormalToLocal
+getEndFacePlanePoint(side)  getEndFaceWorldNormal(side)
+```
+
+- **`getEndFacePlanePoint('sp')`** → 该端面中心的**世界坐标**（实测立柱 sp 端返回 `{10,0,10}`，与 sp 一致）
+- **`getEndFaceWorldNormal('sp')`** → 端面外法向（实测 `{0,-1,0}`）
+- `toWorld(v)` 要的是带 `.clone()` 的 Vector3，传普通对象会报 `e.clone is not a function`
+- **`serialize()` 给出存盘的真实字段集**，比翻 zip 快：
+  `id type quaternion visible opacity semiTransparent lock name productName version sp ep logicSp logicEp worldQuaternion sectionId materialId materialName model classificationEnCode shapeCenter dxfMin spAutoGenConnector epAutoGenConnector faceSection`
+
+## manager 新发现的方法
+
+以前只用 `getAllEntities / addEntity / delEntityById / updateEntity`，实际还有：
+
+```
+getEntitiesByType(type)        按类型取，省掉 filter
+getEntityById(id)
+getRelatedConnectors([ids])    入参是 id 数组，返回挂在这些件上的连接件
+getFirstPriorityConnectors()
+getProcessHolesByOwnerIds([ids])
+getUsedModelIds()
+triggerRender() / triggerRenderById(id)    刷新渲染，比 onEntityUpdated 直接
+updateEntitiesVisible() / updateEntitiesVisibleByType()
+generateId()                   生成合法 id，不用自己拼
+applyOrCollectDoc()
+delEntity(e)  clearEntities()  hasEntityById(id)
+```
+
+**`getRelatedConnectors([profileId])` 直接替代**「移动型材后手工反查连接件」那一套 —— 实测对一根立柱返回 10 个连接件。
+
+## documentGroup 有一整套干涉检测
+
+这是之前完全不知道的能力。
+
+```js
+const dg  = core.documentVisual.documentGroup;
+const det = dg.debugGetInterferenceDetector();
+
+dg.detectAllInterference()        // == det.requestFullRebuild()，异步
+det.hasPenetration()              // 当前有没有穿模
+det.getPenetrationPartners(id)    // 某件和谁穿了
+det.buildSummary()                // {hasCollision, collisionPairs}
+det.setInterferenceTolerance(n)   // 容差
+det.setEnableAccessoryDetection(b)// 要不要把配件算进去
+det.setEnableCrossCategory(b)
+det.evaluatePairByIds(a, b)
+```
+
+内部是 OBB 系统：`obbCache`（每件一个包围盒）、`pairResults`（两两结果，实测 67 件 → 1161 对）、`penetrationPartners`。
+
+**两个坑：**
+- **`detectAllInterference()` 是异步的**，它只是请求重建；结果要等一会儿再从 `hasPenetration()` / `buildSummary()` 读。直接读返回值拿到的是**上一轮**的摘要。
+- **脚本注入的实体不进检测集。** 实测故意插一根横穿立柱的型材，`obbCache` 仍停在 67（= 可见型材 25 + 连接件 42），检测结果照旧 `hasCollision:false`。和「一键生成读可视层缓存」是同一个病根，大概率也要**存盘 + 刷新**才认。
+- 检测集的定义在 `getInterferenceObjects()`：`getAllEntityObjects()` 里 `visible` 且类型不在排除表的那些。
+
+## 合成事件的能力边界（画布交互）
+
+页面里合成 `PointerEvent` 驱动画布，**能做一半**：
+
+| 交互 | 合成事件 | 说明 |
+|---|---|---|
+| 打孔（点在已有型材表面上） | ✅ 成功 | raycast 打到实体即可 |
+| 绘制单根（在空间里取两点） | ❌ 无反应 | |
+| 放置连接件（点指示区域） | ❌ 无反应 | |
+
+分界线是**「点到已有实体上」能成，「在空间里取点」不行**。后者大概要真实 CDP 事件，或者要先让 canvas 拿到焦点。
+
+**诊断遮挡一定用 `d.elementFromPoint(x, y)`**，别数浮层个数：
+- 选中端面连接件会弹「端面连接件说明」modal
+- 偏好设置面板的 `.ant-modal-wrap` 是**全屏透明层**，看起来什么都没挡，实际吃掉所有点击
+
+两者都要用 `.ant-modal-close` 关掉，`elementFromPoint` 返回 `CANVAS` 才算干净。
