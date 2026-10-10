@@ -77,7 +77,11 @@ async () => {
     out.core = '未挂载，先跑 fa-inject.js 的第 1 段';
   }
 
-  // ---- 4. 接口清单：扫 bundle 里所有 /api/fa-platform 路径，新路径 = 新功能 ----
+  // ---- 4. 接口清单 ----
+  // 2026-10-10：bundle 里已经没有字面量 /api/fa-platform/ 路径了（6 个脚本全抓完 0 命中），
+  // 下面这段基本只会返回空。真要看接口，用 chrome-devtools 的 list_network_requests
+  // 抓实际发出的请求 —— 比 grep bundle 可靠，也能看到动态拼出来的路径。
+  // 保留这段只是为了万一哪天又变回字面量。
   const KNOWN = new Set(['profile-draft/list', 'profile-draft/example', 'profile-draft/free-save',
     'profile-draft/file-upload', 'profile-draft/step-file/check', 'profile-draft/template-draft-visible',
     'profile-draft/delete', 'file/get-upload-url', 'file/update-file-status',
@@ -91,6 +95,15 @@ async () => {
   }
   out.新接口 = [...paths].filter(p => !KNOWN.has(p)).sort();
   out.接口总数 = paths.size;
+  if (paths.size === 0) out.接口扫描 = '0 命中 —— 预期如此，改用 list_network_requests';
+
+  // ---- 5. 注入孔还在不在：平台可能回收"无关联配件"的孔 ----
+  // 2026-10-10 实测：某张稿三周内从 69 孔掉到 48，消失的正好是 sourceAccessoryId 为空的那 21 个。
+  // 开一张用过注入的旧稿跑这行，数对不上就说明平台在清理孤儿孔。
+  if (core) {
+    const H = core.document.manager.getAllEntities().filter(e => e.type === 'ProcessHole');
+    out.孔 = { 总数: H.length, 注入: H.filter(h => !h.sourceAccessoryId).length };
+  }
 
   return out;
 }
