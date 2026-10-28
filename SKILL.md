@@ -88,6 +88,9 @@ description: 嘉立创下单：铝型材骨架、板材、钣金折弯件的建�
   **诊断遮挡用 `d.elementFromPoint(x,y)`，别数浮层个数** —— 偏好面板的 `.ant-modal-wrap` 是全屏透明层，看着没挡实际吃掉所有点击；选中端面连接件还会弹自己的说明 modal。两个都 `.ant-modal-close` 关掉，`elementFromPoint` 返回 `CANVAS` 才算干净。
 - **「当前浏览器版本过低，页面无法显示」多半是假的（2026-10-28）。** 这是 iframe 里的 `webgl-gate`，WebGL 上下文创建失败时就弹这句，和版本无关（当时是 Chrome 156，同页 WebGL2 自测正常）。浏览器刚重启时偶发，**新开一个标签页**重进就好。
 - **chrome-devtools 换了 profile 会掉登录**，保存/计价时才弹扫码框。注入和看模型不需要登录，存盘前请用户在那个窗口里扫码。
+- **新稿第一次保存只能点右侧抽屉底部的「保存设计稿」（2026-10-28）。** 画布右边那个竖排的「保存」按钮，对从没存过的稿会在外层页面抛 `Cannot read properties of null (reading 'draftName')`，报「保存失败:2」，**连网络请求都不发**；同一张稿换抽屉里的按钮就成功。抽屉没展开时那个按钮在屏幕外，先 fire 一下 `.right-collapse` 再真实点击。已经存过（URL 带 `draftVersionId`）的稿两个按钮都能用。
+- **嵌入式面板的平台规则（2026-10-28 原生生成后读出）**：尺寸 = 开口 + **每边 5mm**（2020 槽），板居中在槽轴线上（`position` 沿法向取 轴线 − T/2）；**挨着立柱的角切 5×5 缺口**，挨着中梁（端头顶在别的梁上）的角不切，所以 `isRectangle:false`、轮廓 8~12 个点。默认厚度 5，要改 3 得同时改 `thickness` 和 `panelParams` 里 thickness 的 `value`。
+- **注入实体的四元数必须是对象，不能是数组。** `quaternion` / `worldQuaternion` 写成 `[x,y,z,w]` 时 loadDoc 不会转换：面板包围盒全 NaN，存盘也会挂。写 `{isQuaternion:true,_x,_y,_z,_w}`，或事后用 `cam.quaternion.constructor` 造真 Quaternion 替换。克隆出来的面板改 `position/uAxis/vAxis` 也要用 `cam.position.constructor` 造的 Vector3，纯对象会让 `onEntityAdded` 抛 `e.position.clone is not a function`。
 - **「保存成功」弹窗挂在最外层 document，不在 iframe 里。** 它是 modal，不关掉会挡住之后所有点击，而且在 iframe 里怎么找都找不到。保存后先 `take_snapshot` 找到外层的 `button "Close"` 点掉，再做下一步。
 
 1. **打开设计稿**：`https://xc.jlcfa.com/free-design?draftVersionId=<id>`，或 `/my-design` 列表点进去。等 canvas 出现再动手（10s 以上）。
