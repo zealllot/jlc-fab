@@ -33,7 +33,7 @@ description: 嘉立创下单：铝型材骨架、板材、钣金折弯件的建�
 | core 新增对象（2026-10-10） | `draftSaveValidator` —— 保存前校验型材和配件的模型资源，缺模型 / 缺文件 / 缺尺寸会抛 `ACCESSORY_MODEL_LOAD_FAILED` / `..._FILE_MISSING` / `ACCESSORY_SIZE_MISSING` 并**阻止保存**（只管 Profile 和配件，不碰 ProcessHole）。另有 `screenshotHelper` / `panelOutlineScene` / `editSceneManager` / `maintenanceLocked`。 |
 | 接口清单 | **旧的 bundle 扫法已失效**（2026-10-10，6 个脚本 0 命中）。用 `list_network_requests` 抓实际请求。这次新发现 9 条：`profile-draft/free`、`profile-home/stop-service-status`、`profile-home/page-info`、`alumc/queryProfileGroupQRCode`、`profile/free-designer/checkAppPermission`、**`profile/free-designer/connector/modular-list-v2`**（连接件目录）、`faMall/secret/update`、`faMall/login/user`、`faMall/shoppingCart/count`。 |
 | 「一键生成连接件」 | 对注入实体可用，但**必须先存盘 + 刷新**。覆盖率由几何决定，不是平台能力上限：轴线共线 + 截面同宽时实测可达 **100%**（26/26、24/24 各一次）；混用规格会掉到 7/26。阶梯见下文。 |
-| 板材加工 | **不支持**（2026-09-19 实测）。板材只按外形尺寸下料，孔自己钻。 |
+| 板材加工 | **支持了（V1.1.6.5，2026-09-24 发布）**：选中板材 → 顶栏「编辑面板」→ 轮廓编辑，可画圆孔 / 矩形孔 / 矩阵方孔 / 矩阵圆孔、圆槽 / 方槽 / 矩阵槽，角点倒圆 / 倒角 / 切角。入口很隐蔽（官方群原话「需要选中板材，再点一下面板编辑」）。同版本还加了**板件与型材的真实模型干涉检测**和多选拖拽复制。<br>旧结论「不支持、孔自己钻」是 09-19 测的，早了 5 天。**开的孔进不进计价还没实测** —— 用之前按「标签 vs 真实能力」那条，开一个孔看加工费动没动。实体上对应字段大概是 Panel 的 `originalContour.holes` / `editorOutline`。 |
 
 **对不上就按新情况重做分派，然后回来改这份文档** —— 材料 ID 表、路线图、基线表都要跟着动，别把新发现只留在这次对话里。材料库上新单独看 [fa-designer.md](references/fa-designer.md) 的材料表，那张表最容易过期。
 
@@ -42,7 +42,7 @@ description: 嘉立创下单：铝型材骨架、板材、钣金折弯件的建�
 | 要做的件 | 入口 | 能力边界 |
 |---|---|---|
 | 铝型材骨架（下料 + 攻牙 + 沉头孔 + 连接件 + 螺丝） | `xc.jlcfa.com/free-design` 设计器 | 见 [specs-and-prices.md](references/specs-and-prices.md) 的加工清单 |
-| 板材：多层板 / 海洋板 / 亚克力（矩形平板） | 同一个设计器 | 「面板」模块 2026-10-10 已上线，**先试原生**；注入 Panel 实体也仍可用并正常计价。**板材不能打孔**，孔自己钻。 |
+| 板材：多层板 / 海洋板 / 亚克力（矩形平板） | 同一个设计器 | 「面板」模块 2026-10-10 已上线，**先试原生**；注入 Panel 实体也仍可用并正常计价。**板材可以开孔了**（轮廓编辑，见基线表「板材加工」）。 |
 | 金属板件：铝 5052 / 不锈钢，要折弯、圆孔、表面处理 | `jlc-bj.com` 钣金站，传 STEP | 见 [sheet-metal.md](references/sheet-metal.md) |
 | 只想给一堆现成型材询价，不建整柜 | `jlcfa.com/profile-quote` 传 STEP 智能识别 | 截面自动匹配，追加工从几何里读 |
 
