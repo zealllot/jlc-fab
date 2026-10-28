@@ -20,6 +20,18 @@
 
 **写实体有两条等价路径**：逐个 `mgr.addEntity(p)`，或者 `doc = IOHelper.getDocument(); doc.entities.push(...P); core.document.loadDoc(doc)`。后者更稳（材质引用会一起重建）。两条都要跟 `ensureAllAssets()` + `onEntityAdded`。
 
+> **`onEntityAdded({ids})` 的 ids 是 id 字符串，不是实体对象（2026-10-17 读源码确认，推翻旧记录）。**
+> 现行实现：
+> ```js
+> addObject(e){ if(this.idToEntityObjectMap.has(e))return;
+>   const t=this.docDataManager.getEntityById(e);   // e 当 id 用
+>   if(!t)return; const n=this.factory.createEntityObject(t);
+>   n&&(this.idToEntityObjectMap.set(e,n),this.add(n)) }
+> ```
+> 传实体对象的话 `getEntityById(对象)` 返回 undefined，**直接静默 return —— 不报错、不渲染**，
+> 表现成「实体数对、画布全空、`getEntityObjectById` 全是 null」。
+> 排查手法：`dg.addObject.toString()` 直接读源码，比猜快得多。
+
 ## 坐标约定
 
 **轴向：x = 深，y = 高（向上），z = 宽。** 原点在柜体左前下角。
@@ -112,21 +124,82 @@
 
 **改型材规格要带 shapeCenter。** `mgr.updateEntity(p, {sectionId, model, name, productName, classificationEnCode, shapeCenter})`，`changedKeys` 六个字段全带上，再跟 `ensureAllAssets()` + `onEntityUpdated`。漏了 `shapeCenter` 截面中心会错半边。
 
-板材（specId / materialId / materialName / model / materialModel / productName）：
+板材（specId / materialId / materialName / model / materialModel / productName）。
+**最后实测 2026-10-15**，★ 是这次新补的行：
 
-| 简称 | specId | materialId | materialName | model | materialModel | productName |
+**覆盖式 / 嵌平式**（Overlay / Flush 共用同一套库）
+
+| 简称 | specId | materialId | materialName | model | materialModel | productName | 厚度 |
+|---|---|---|---|---|---|---|---|
+| 亚克力透明 | 1472967605936867 | 1426196088972983 | 亚克力透明 | PMMA | BC-PMMA-TM | 亚克力板 | 3/4/5/6/8/10 |
+| 亚克力黑 | 1472967605936867 | 1340108833003276 | 亚克力黑色 | PMMA | BC-PMMA-HS | 亚克力板 | 同上 |
+| 亚克力茶 | 1472967605936867 | 1480323274557562 | 亚克力茶色 | PMMA | BC-PMMA-CS | 亚克力板 | 同上 |
+| ★ 亚克力橙 | 1398972184931064 | 1417540001257510 | 橙色亚克力透明 | PMMA-OG | BC-PMMA-OGT | 亚克力板 橙色 | 3/5 |
+| ★ 亚克力粗条纹 | 1289016754032956 | 1420096387918304 | 粗条纹亚克力透明 | PMMA-TW | BC-PMMA-TWT | 亚克力板 条纹 | 3/5 |
+| ★ 亚克力细条纹 | 1289016754032956 | 1361319941090689 | 细条纹亚克力透明 | PMMA-TW | BC-PMMA-TWT | 亚克力板 条纹 | 3/5 |
+| ★ 亚克力磨砂 | 1434759472700075 | 1488611090634553 | 磨砂亚克力透明 | PMMA-MS | BC-PMMA-MST | 亚克力板 磨砂 | 3/4/5/6 |
+| ★ PC透明 | 1301805048531547 | 1426796014521866 | PC透明 | PC | BC-PC-TM | PC板 | 3/4/5/6/8/10 |
+| ★ PC茶 | 1301805048531547 | 1161752269699111 | PC茶色 | PC | BC-PC-CS | PC板 | 同上 |
+| ★ PC黑 | 1301805048531547 | 1629050848413990 | PC黑色 | PC | ? | PC板 | 同上 |
+| ★ PVC透明 | 1356961753747568 | 1196302904705390 | PVC透明 | PVC | BC-PVC-TM | PVC板 | 3/4/5/6/8/10 |
+| ★ 多层板白 | 1588904263988966 | 1355775880096869 | 多层板 白色 | DCB-A | BC-DCB-BS | 多层胶合板 桉木芯 ENF级 | 8/18/26 |
+| ★ 多层板灰 | 1588904263988966 | 1356141512873469 | 多层板 灰色 | DCB-A | BC-DCB-HS | 同上 | 8/18/26 |
+| ★ 多层板胡桃 | 1588904263988966 | 1578520837429530 | 多层板 胡桃木色 | DCB-A | BC-DCB-HTMS | 同上 | 8/18/26 |
+| 多层板原木 | 1588904263988966 | 1137671796893973 | 多层板 原木色 | DCB-A | BC-DCB-YMS | 同上 | 8/18/26 |
+| 海洋板国产素板UV | 1600616659800247 | 1396337935602445 | 海洋板 国产 素板 UV清漆 | HYBG-SU | BC-HYBG-UVQ | 海洋板 国产 素板 桦木芯 E0级 | 6/9/12/18/25 |
+| 海洋板国产素板无漆 | 1600616659800247 | 1394927302481424 | 海洋板 国产 素板 无漆 | HYBG-SU | BC-HYBG-WUQ | 同上 | 6/9/12/18/25 |
+| ★ 海洋板国产木蜡油复古棕 | 1327712320506059 | 1288466713652849 | 海洋板 国产 木蜡油 复古棕 | HYBG-ML | ? | 海洋板 国产 木蜡油 桦木芯 E0级 | 6/9/12/18/25 |
+| 海洋板国产木蜡油胡桃 | 1327712320506059 | 1547707598586504 | 海洋板 国产 木蜡油 胡桃木色 | HYBG-ML | BC-HYBG-HTM | 同上 | 6/9/12/18/25 |
+| ★ 海洋板国产木蜡油黑 | 1327712320506059 | 1401313471362753 | 海洋板 国产 木蜡油 黑色 | HYBG-ML | ? | 同上 | 6/9/12/18/25 |
+| ★ 海洋板国产木蜡油枫木白 | 1327712320506059 | 1618885915300200 | 海洋板 国产 木蜡油 枫木白 | HYBG-ML | BC-HYBG-FMB | 同上 | 6/9/12/18/25 |
+| 海洋板进口素板UV | 1589780854793029 | 1678930130036684 | 海洋板 进口 素板 UV清漆 | HYBW-SU | BC-HYBW-UVQ | 海洋板 进口 B/BB 素板 ENF级 | 15/18/21/24 |
+| ★ 海洋板进口素板无漆 | 1589780854793029 | 1438535652218298 | 海洋板 进口 素板 无漆 | HYBW-SU | BC-HYBW-WUQ | 同上 | 15/18/21/24 |
+| ★ 海洋板进口木蜡油复古棕 | 1543967297050709 | 1500623858212151 | 海洋板 进口 木蜡油 复古棕 | HYBW-ML | ? | 海洋板 进口 B/BB 木蜡油 ENF级 | 15/18/21/24 |
+| 海洋板进口木蜡油胡桃 | 1543967297050709 | 1346877459814935 | 海洋板 进口 木蜡油 胡桃木色 | HYBW-ML | BC-HYBW-HTM | 同上 | 15/18/21/24 |
+| ★ 海洋板进口木蜡油黑 | 1543967297050709 | 1355389061941926 | 海洋板 进口 木蜡油 黑色 | HYBW-ML | ? | 同上 | 15/18/21/24 |
+| ★ 海洋板进口木蜡油枫木白 | 1543967297050709 | 1381814475183007 | 海洋板 进口 木蜡油 枫木白 | HYBW-ML | BC-HYBW-FMB | 同上 | 15/18/21/24 |
+
+**嵌入式是另一套产品线，specId 不同、厚度被锁死。** 亚克力 / PC / PVC 在嵌入式库里和上表同号同厚；
+下面三条是嵌入专用的木板，**只有这三条**：
+
+| 简称 | specId | materialId | model | materialModel | productName | 厚度 |
 |---|---|---|---|---|---|---|
-| 多层板原木色 | 1588904263988966 | 1137671796893973 | 多层板 原木色 | DCB-A | BC-DCB-YMS | 多层胶合板 |
-| 海洋板国产素板UV | 1600616659800247 | 1396337935602445 | 海洋板 国产 素板 UV清漆 | HYBG-SU | BC-HYBG-UVQ | 海洋板 国产 素板 |
-| 海洋板国产素板无漆 | 1600616659800247 | 1394927302481424 | 海洋板 国产 素板 无漆 | HYBG-SU | BC-HYBG-WUQ | 海洋板 国产 素板 |
-| 海洋板国产木蜡油胡桃 | 1327712320506059 | 1547707598586504 | 海洋板 国产 木蜡油 胡桃木色 | HYBG-ML | BC-HYBG-HTM | 海洋板 国产 木蜡油 |
-| 海洋板进口素板UV | 1589780854793029 | 1678930130036684 | 海洋板 进口 素板 UV清漆 | HYBW-SU | BC-HYBW-UVQ | 海洋板 进口 B/BB 素板 |
-| 海洋板进口木蜡油胡桃 | 1543967297050709 | 1346877459814935 | 海洋板 进口 木蜡油 胡桃木色 | HYBW-ML | BC-HYBW-HTM | 海洋板 进口 B/BB 木蜡油 |
-| 亚克力黑 | 1472967605936867 | 1340108833003276 | 亚克力黑色 | PMMA | BC-PMMA-HS | 亚克力板 |
-| 亚克力茶 | 1472967605936867 | 1480323274557562 | 亚克力茶色 | PMMA | BC-PMMA-CS | 亚克力板 |
-| 亚克力透明 | 1472967605936867 | 1426196088972983 | 亚克力透明 | PMMA | BC-PMMA-TM | 亚克力板 |
+| 多层板白(嵌入) | 1484465432227111 | 1355775880096869 | DCB-NQ | BC-DCB-BS | 多层胶合板(嵌入) | **只有 8** |
+| 多层板灰/胡桃/原木(嵌入) | 1484465432227111 | 见上表同名行 | DCB-NQ | 同上表 | 多层胶合板(嵌入) | **只有 8** |
+| 海洋板国产素板(嵌入) | 1663827107233913 | 见上表同名行 | HYBG-SU-NQ | 同上表 | 海洋板 国产 素板(嵌入) | 6/9 |
+| 海洋板国产木蜡油(嵌入) | 1397026287165071 | 见上表同名行 | HYBG-ML-NQ | 同上表 | 海洋板 国产 木蜡油(嵌入) | 6/9 |
 
-**这张表最容易过期** —— 2026-09 中旬就上过一批海洋板。表里没有的材质，用和型材同样的办法拿：在界面里选中那个材质画一块板，读它的实体，把 `specId` / `materialId` / `materialName` / `model` / `materialModel` / `productName` 六个字段整组抄下来，再把新行补回这张表。
+**`materialId` 跨产品线通用** —— 多层板白色 `1355775880096869` 在覆盖式(DCB-A)和嵌入式(DCB-NQ)里是同一个，
+变的只有 `specId` / `model` / `productName`。换安装方式时别重新找颜色 ID。
+
+### 嵌入式木板的厚度陷阱（2026-09 踩过，2026-10-15 复查仍在）
+
+2020 欧标槽**喉宽 6.2 / 可入深 6.11**，所以嵌入板厚必须 **≤6**。而嵌入式库里：
+
+- **多层胶合板只有 8mm** —— 塞不进去，**而且平台不铣薄**（已向嘉立创确认是设计器缺校验，
+  原话「设计器还没完善，要自己改一下」）。**多层板走嵌入式这条路是死的**，只能改覆盖式拧螺丝。
+- 海洋板(嵌入) 有 6mm，能用，但 6.0 进 6.2 只剩 0.2 间隙，板材公差一吃就卡。
+- 亚克力 / PC / PVC 有 3/4/5，**5mm 是最稳的嵌入厚度**（留 1.2 余量，正好吃掉亚克力的热胀）。
+
+设计器会让你选 8mm 嵌入式并正常计价，**它不报错**。下单前自己按这条核。
+
+### 怎么补新行
+
+表里没有的材质，两条路：
+
+1. **裸 fetch 两个接口**（POST，要 `x-xsrf-token`，值取自 `XSRF-TOKEN` cookie）：
+   ```
+   panel/specified-library-list      {pageNum,pageSize,searchWord:null,catalogBizKeys:[],panelType}
+       → list[].bizKey = specId、panelModel = model、panelName = productName
+         panelParams 里 param==='thickness' 的 selectItems = 可选厚度
+   panel/specified-color-library-list {pageNum,pageSize,panelBizKey:<specId>,catalogBizKeys:[],searchWord:null}
+       → list[].bizKey = materialId、productName = materialName、colorHex = 色值
+   ```
+   `panelType` 取 `Embedded` / `Overlay` / `Flush`（**`ContourOverlay` 会报「面板类型无效」**，
+   轮廓覆盖式在 UI 上有、接口上没有）。
+2. **`materialModel` 这两个接口都不返回**，从预览图文件名里抠：
+   `.../<雪花ID>-BC-PMMA-TM.png` → `BC-PMMA-TM`。中文名的图抠不出来（上表的 `?`），
+   那几个要在界面上选中画一块板再读实体。
 
 ```js
 core.document.manager.getAllEntities().filter(e => e.type === 'Panel')

@@ -121,20 +121,36 @@ async () => {
   await sleep(2000);
 
   // ---- 6. 校验：逐件核对包围盒，这是"做完了"的判据 ----
-  const rr = n => Math.round(n * 10) / 10;
-  const boxes = P.filter(p => p.type === 'Panel').map(p => {
-    const b = dg.getEntityObjectById(p.id).computeAccurateWorldBoundingBox();
-    return { n: p.name, x: [rr(b.min.x), rr(b.max.x)], y: [rr(b.min.y), rr(b.max.y)], z: [rr(b.min.z), rr(b.max.z)] };
-  });
+  // computeAccurateWorldBoundingBox / computeSpecification 都已被平台移除，遍历 three.js 顶点自己算
+  function bbox(id) {
+    const o = dg.getEntityObjectById(id); if (!o) return null;
+    o.updateMatrixWorld?.(true);
+    const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
+    o.traverse(c => {
+      const a = c.geometry?.attributes?.position; if (!a || !c.isMesh) return;
+      const m = c.matrixWorld.elements;
+      for (let i = 0; i < a.count; i++) {
+        const x = a.getX(i), y = a.getY(i), z = a.getZ(i);
+        const q = [m[0]*x+m[4]*y+m[8]*z+m[12], m[1]*x+m[5]*y+m[9]*z+m[13], m[2]*x+m[6]*y+m[10]*z+m[14]];
+        for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], q[k]); mx[k] = Math.max(mx[k], q[k]); }
+      }
+    });
+    const r = Math.round;
+    return mn[0] > mx[0] ? null : { x: [r(mn[0]), r(mx[0])], y: [r(mn[1]), r(mx[1])], z: [r(mn[2]), r(mx[2])] };
+  }
+  const all = P.map(p => ({ n: p.name, t: p.type, ...bbox(p.id) }));
+  const ok = all.filter(b => b.x);
+  const ext = k => [Math.min(...ok.map(b => b[k][0])), Math.max(...ok.map(b => b[k][1]))];
 
-  // ---- 7. 保存：改稿名 + 点它自己的按钮，别手搓 free-save ----
+  // ---- 7. 保存：改稿名 + 点它自己的按钮，别手搓 free-save（要已登录，否则弹扫码框） ----
   core.document.setDocName && core.document.setDocName('方案名');
   const sv = [...d.querySelectorAll('button')].find(e => /保存设计稿/.test(e.textContent));
   if (sv) sv.click();
   await sleep(12000);
 
-  return { 整体: core.bomHelper.computeSpecification(), 包围盒: boxes,
-           保存: /保存成功/.test(d.body.innerText) };
+  return { 整体: { 深x: ext('x'), 高y: ext('y'), 宽z: ext('z') }, 未渲染: all.length - ok.length,
+           包围盒: all.filter(b => b.t === 'Panel'),
+           保存: !!document.querySelector('.el-dialog.save-free-draft-success') };
 }
 
 // ============================================================
